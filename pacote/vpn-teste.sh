@@ -6,10 +6,12 @@
 # Precisa do daemon no ar (sambbi-vpn iniciar) e do remote nas do rclone. O
 # arquivo de teste é aleatório, vai para NAS_DIR e é apagado no fim. Sem
 # NAS_DIR, vai para teste-vpn/ dentro da pasta com o nome do usuário do remote,
-# se houver, ou da pasta home.
+# se houver, ou da pasta home. O NAS é achado pelo endereço na VPN, o mesmo do
+# remote nas (NAS_IP muda), e não pelo nome, que pode mudar.
 socket_do_sistema
 mib=${1:-100}
 sock=$SAMBBI_VPN_SOCKET
+nas=${NAS_IP:-100.64.0.1}
 # O FTP do QNAP responde 550 ao MLSD na pasta home dos usuários; o LIST funciona.
 rclone() { command rclone --ftp-disable-mlsd "$@"; }
 if [ -z "${NAS_DIR:-}" ]; then
@@ -27,7 +29,7 @@ fi
 dest=$NAS_DIR
 echo "== destino do teste: $dest"
 t() { tailscale --socket="$sock" "$@"; }
-caminho() { t status --json | jq -c '.Peer[] | select(.HostName=="nas") | {CurAddr, Relay}'; }
+caminho() { t status --json | jq -c --arg ip "$nas" '(.Peer // {})[] | select(any(.TailscaleIPs[]?; . == $ip)) | {CurAddr, Relay}'; }
 w=$(mktemp -d)
 trap 'rm -rf "$w"' EXIT
 
@@ -39,7 +41,7 @@ echo "== $(date '+%F %T') saída: $dev $end"
 echo "== netcheck"
 t netcheck 2>&1 | grep -E 'UDP|IPv4|MappingVaries|PortMapping|sambbi:'
 echo "== ping (para quando o caminho fica direto)"
-t ping -c 15 nas 2>&1 | tail -3
+t ping -c 15 "$nas" 2>&1 | tail -3
 echo "== caminho"
 caminho
 
@@ -68,4 +70,4 @@ rclone rmdir "$dest" 2>/dev/null
 
 echo "== caminho depois da carga"
 caminho
-t ping -c 5 --until-direct=false nas 2>&1 | tail -5
+t ping -c 5 --until-direct=false "$nas" 2>&1 | tail -5

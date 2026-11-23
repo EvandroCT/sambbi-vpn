@@ -14,7 +14,7 @@ uso: sambbi-vpn COMANDO
   entrar [--nome NOME] [--chave ARQUIVO]
             cadastra esta máquina: com a chave de cadastro ou, sem ela, com
             um pedido que o admin aprova na VM
-  outros    vão para o tailscale: status, ip, ping nas, netcheck, nc...
+  outros    vão para o tailscale: status, ip, ping 100.64.0.1, netcheck, nc...
 EOF
 }
 

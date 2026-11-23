@@ -20,6 +20,8 @@ Com sudo, o script vem pela entrada padrão: `curl -fsSL URL | sudo bash -s -- [
 
 1. Instala o Nix pelo [nixinstall](https://github.com/EvandroCT/nixinstall): no `/nix` por padrão, ou pelo proot com `--proot`.
 2. Instala o pacote deste flake num perfil próprio do Nix: `/nix/var/nix/profiles/sambbi-vpn` com root, `~/.local/state/nix/profiles/sambbi-vpn` sem root. Os comandos entram no `PATH` por links em `/usr/local/bin` (root) ou por um bloco no fim do `~/.profile`.
+
+   Sem root, se o `~/.ssh/config` tiver a linha `ProxyCommand tailscale --socket=…/tailscale-user/tailscaled.sock nc %h %p`, de uma instalação manual anterior, o instalador a troca por `ProxyCommand CAMINHO/sambbi-vpn nc %h %p`. Com o caminho completo do comando, o SSH alcança a VPN também fora dos terminais. O arquivo anterior fica em `~/.ssh/config.antes-sambbi-vpn`. Com root, o `~/.ssh/config` fica como está, porque com sudo o `HOME` pode ser o de outro usuário.
 3. Sobe o daemon da VPN (o `tailscaled`), como serviço sempre que dá:
 
    | Máquina | Daemon | Rede |
@@ -48,8 +50,8 @@ Com sudo, o script vem pela entrada padrão: `curl -fsSL URL | sudo bash -s -- [
 | `sambbi-vpn parar` | Para o daemon. Sem systemd, ele fica parado até o próximo `iniciar` ou até um reinício |
 | `sambbi-vpn reiniciar` | Troca o daemon no ar pelo da versão instalada agora. Quem o sobe de novo é o systemd ou o supervisor: se o comando cair no meio, como numa sessão SSH pela própria VPN, a VPN volta assim mesmo. Prefira-o a `parar` seguido de `iniciar` |
 | `sambbi-vpn entrar [--nome NOME] [--chave ARQUIVO]` | Cadastra a máquina |
-| `sambbi-vpn status`, `ip`, `ping nas`, `netcheck`, `nc HOST PORTA`... | Comandos do tailscale, com o socket certo |
-| `vpn-teste [MiB]` | Caminho (direto ou retransmissor), latência e velocidade do FTP até o NAS, nos dois sentidos. O arquivo vai para `teste-vpn/`, dentro da pasta com o nome do usuário ou da `home` (ou para `NAS_DIR`), e é apagado no fim |
+| `sambbi-vpn status`, `ip`, `ping 100.64.0.1`, `netcheck`, `nc HOST PORTA`... | Comandos do tailscale, com o socket certo |
+| `vpn-teste [MiB]` | Caminho (direto ou retransmissor), latência e velocidade do FTP até o NAS, nos dois sentidos. O arquivo vai para `teste-vpn/`, dentro da pasta com o nome do usuário ou da `home` (ou para `NAS_DIR`), e é apagado no fim. O NAS é achado pelo endereço na VPN, `100.64.0.1` (ou `NAS_IP`), e não pelo nome, que pode mudar |
 | `rclone lsd nas:` | O NAS pelo rclone |
 
 O ambiente de produção, sem instalar nada no perfil: `nix develop github:EvandroCT/sambbi-vpn`.
@@ -59,7 +61,9 @@ O ambiente de produção, sem instalar nada no perfil: `nix develop github:Evand
 Os terminais abrem dentro do proot. Um processo aberto ali dentro morre quando o terminal é encerrado, e um `nixp COMANDO` só volta quando terminam todos os processos que o comando abriu. Por isso o supervisor da VPN roda num proot só dele, aberto fora de qualquer outro:
 
 - **ao abrir um terminal**, por um bloco no início do `~/.profile`, antes do bloco do nixinstall. Se o supervisor já estiver no ar, nada muda;
-- **fora dos terminais** (notebooks, scripts), por `~/.local/bin/sambbi-vpn iniciar`. Esse comando aceita os outros subcomandos também, como `~/.local/bin/sambbi-vpn status`. Para o rclone e o vpn-teste, ponha `nixp` antes: `nixp rclone lsd nas:`.
+- **fora dos terminais** (notebooks, scripts), por `~/.local/bin/sambbi-vpn iniciar`. Esse comando aceita os outros subcomandos também, como `~/.local/bin/sambbi-vpn status`.
+
+Fora dos terminais, o `PATH` não tem o perfil da VPN. Por isso o rclone e o vpn-teste também ganham um comando em `~/.local/bin`: `~/.local/bin/rclone lsd nas:` e `~/.local/bin/vpn-teste`. Se um desses arquivos já existir e não for do instalador, ele fica como está, e o instalador avisa.
 
 Encerrar um terminal não derruba a VPN.
 
@@ -92,7 +96,8 @@ Valem para o instalador e para os comandos:
 2. Apague o perfil: `rm /nix/var/nix/profiles/sambbi-vpn*` (root) ou `rm ~/.local/state/nix/profiles/sambbi-vpn*`.
    - Com root, apague também os links de `/usr/local/bin`.
    - Sem root, apague o bloco `sambbi-vpn` do `~/.profile` (ou do `~/.bash_profile`, se ele existir).
-   - Com o proot, apague também `~/.local/bin/sambbi-vpn`.
+   - Com o proot, apague também `~/.local/bin/sambbi-vpn`, e o `~/.local/bin/rclone` e o `~/.local/bin/vpn-teste` que o instalador gravou.
+   - Se o instalador trocou o `ProxyCommand` do `~/.ssh/config`, ajuste a linha ou volte o arquivo anterior, `~/.ssh/config.antes-sambbi-vpn`.
 3. Para sair da VPN, apague a pasta de estado e peça ao admin que remova o nó na VM (`headscale nodes delete`).
 
 ## Licença

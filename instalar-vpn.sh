@@ -7,7 +7,8 @@
 # Pode rodar de novo: o que já está feito fica como está. Os passos:
 # 1. O Nix, pelo nixinstall (github.com/EvandroCT/nixinstall).
 # 2. O pacote deste flake, num perfil próprio do Nix: sambbi-vpn, sambbi-vpnd,
-#    vpn-teste e rclone.
+#    vpn-teste e rclone. Sem root, a linha ProxyCommand da receita manual
+#    antiga, no ~/.ssh/config, passa a usar o sambbi-vpn.
 # 3. O daemon da VPN (tailscaled), como serviço sempre que der:
 #    - root com systemd: serviço do sistema, com a rede do kernel;
 #    - sem root, com o systemd do usuário: serviço do usuário. Ele sobe no boot
@@ -27,6 +28,7 @@ NAS=100.64.0.1 # o NAS na VPN
 PROXY=${SAMBBI_VPN_PROXY:-127.0.0.1:1055}
 MARCA='sambbi-vpn: comandos da VPN no PATH'
 MARCA_PROOT='sambbi-vpn: VPN com o Nix pelo proot'
+MARCA_CMD='gravado por instalar-vpn.sh (github.com/EvandroCT/sambbi-vpn)'
 
 diz() { printf '==> %s\n' "$*"; }
 morre() { printf 'erro: %s\n' "$*" >&2; exit 1; }
@@ -149,6 +151,33 @@ versao() {
   readlink "$g" 2>/dev/null || true
 }
 
+# trocar_proxycommand ARQUIVO COMANDO: no ARQUIVO (o ~/.ssh/config), troca a
+# linha ProxyCommand da receita manual antiga, que chama o tailscale do PATH
+# com o socket em .../tailscale-user/, por "ProxyCommand COMANDO nc %h %p".
+# Com o caminho completo do comando, o SSH alcança a VPN também fora dos
+# terminais. A palavra-chave vale com maiúsculas ou minúsculas, com = ou
+# espaço. O arquivo anterior fica em ARQUIVO.antes-sambbi-vpn.
+trocar_proxycommand() {
+  local f=$1 novo=$2 linha tmp n=0
+  local re='^([[:space:]]*)[Pp][Rr][Oo][Xx][Yy][Cc][Oo][Mm][Mm][Aa][Nn][Dd]([[:space:]]*=[[:space:]]*|[[:space:]]+)([^[:space:]]*/)?tailscale[[:space:]]+--socket(=|[[:space:]]+)[^[:space:]]*/tailscale-user/tailscaled[.]sock[[:space:]]+nc[[:space:]]+%h[[:space:]]+%p[[:space:]]*$'
+  [ -f "$f" ] || return 0
+  tmp=$(mktemp)
+  while IFS= read -r linha || [ -n "$linha" ]; do
+    if [[ $linha =~ $re ]]; then
+      printf '%sProxyCommand %s nc %%h %%p\n' "${BASH_REMATCH[1]}" "$novo"
+      n=$((n + 1))
+    else
+      printf '%s\n' "$linha"
+    fi
+  done <"$f" >"$tmp"
+  if [ "$n" -gt 0 ]; then
+    cp -p "$f" "$f.antes-sambbi-vpn"
+    cat "$tmp" >"$f" # escreve através de um eventual link
+    diz "$f: ProxyCommand da receita antiga trocado por \"$novo nc %h %p\" (o anterior ficou em $f.antes-sambbi-vpn)"
+  fi
+  rm -f "$tmp"
+}
+
 diz "2/5 pacote da VPN ($FLAKE) no perfil $PERFIL"
 mkdir -p "${PERFIL%/*}"
 antes=$(versao)
@@ -208,6 +237,23 @@ fi
 exec "\$n" "\$p" "\$@"
 EOF
   chmod 755 "$HOME/.local/bin/sambbi-vpn"
+  # Fora dos terminais (notebooks, scripts), o PATH não tem o perfil da VPN, e o
+  # nixp só põe nele o ~/.nix-profile/bin: o rclone e o vpn-teste também ganham
+  # um comando aqui. Um arquivo de outra origem fica como está.
+  for cmd in rclone vpn-teste; do
+    l=$HOME/.local/bin/$cmd
+    if { [ -e "$l" ] || [ -L "$l" ]; } && ! grep -qF "$MARCA_CMD" "$l" 2>/dev/null; then
+      diz "aviso: $l já existe e fica como está; fora dos terminais, use ~/.local/bin/nixp $B/$cmd"
+      continue
+    fi
+    cat >"$l" <<EOF
+#!/bin/sh
+# $cmd da VPN para o Nix pelo proot, $MARCA_CMD.
+# Uma nova instalação o reescreve.
+exec "\$HOME/.local/bin/nixp" '$B/$cmd' "\$@"
+EOF
+    chmod 755 "$l"
+  done
   # O bloco vem antes do bloco do nixinstall, que leva o terminal para o proot
   if ! grep -qF "$MARCA_PROOT" "$alvo" 2>/dev/null; then
     tmp=$(mktemp)
@@ -240,6 +286,11 @@ case ":\$PATH:" in *":$B:"*) ;; *) PATH="$B:\$PATH" ;; esac
 EOF
     diz "$alvo: $B no PATH"
   fi
+fi
+# Com root, o ~/.ssh/config fica como está: com sudo, o HOME pode ser o de outro usuário
+if [ "$eu" != 0 ]; then
+  if [ "${#PFX[@]}" -gt 0 ]; then cmd=$HOME/.local/bin/sambbi-vpn; else cmd=$B/sambbi-vpn; fi
+  trocar_proxycommand "$HOME/.ssh/config" "$cmd"
 fi
 
 diz "3/5 daemon da VPN"
@@ -399,7 +450,7 @@ case $modo in
     fi
     ;;
 esac
-diz "num terminal novo: sambbi-vpn status, sambbi-vpn ping nas, vpn-teste, rclone lsd nas:"
+diz "num terminal novo: sambbi-vpn status, sambbi-vpn ping $NAS, vpn-teste, rclone lsd nas:"
 if [ "${#PFX[@]}" -gt 0 ]; then
-  diz "fora dos terminais (notebooks, scripts): ~/.local/bin/sambbi-vpn COMANDO; para o rclone e o vpn-teste, ponha nixp antes"
+  diz "fora dos terminais (notebooks, scripts): ~/.local/bin/sambbi-vpn COMANDO, ~/.local/bin/vpn-teste e ~/.local/bin/rclone"
 fi
