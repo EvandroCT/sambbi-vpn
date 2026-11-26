@@ -69,7 +69,7 @@ services.sambbi-vpn = {
 };
 ```
 
-Num `configuration.nix` de flake, use o flake como input e `inputs.sambbi-vpn.nixosModules.default`.
+Fora de um flake, prefira fixar o commit, como em `github:EvandroCT/sambbi-vpn/HASH`. Sem o hash, cada `nixos-rebuild` pega a versão do momento, e o Nix guarda a cópia baixada por até 1 hora. Se o root baixou uma versão anterior ao módulo nessa janela, por exemplo com o instalador, a avaliação falha com `attribute 'nixosModules' missing`. Num `configuration.nix` de flake, use o flake como input e `inputs.sambbi-vpn.nixosModules.default`.
 
 O módulo declara a mesma unidade que o instalador cria nas outras distribuições, com a rede do kernel. Ele também põe o perfil `/nix/var/nix/profiles/sambbi-vpn` no `PATH` de todos e deixa a `sambbi0` fora do NetworkManager. O pacote continua no perfil do instalador, que o atualiza. Por isso, rode o instalador com root antes ou depois do `nixos-rebuild switch`: sem o perfil, o serviço não sobe, mas também não falha.
 
