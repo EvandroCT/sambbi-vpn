@@ -27,8 +27,9 @@ Com sudo, o script vem pela entrada padrão: `curl -fsSL URL | sudo bash -s -- [
    | Máquina | Daemon | Rede |
    |---|---|---|
    | Root com systemd | Serviço do sistema (`sambbi-vpn.service`), que sobe no boot | Do kernel, na interface `sambbi0` |
+   | Root no NixOS | Serviço do sistema, se o [módulo](#nixos) estiver no `configuration.nix`. Sem ele, supervisor, e o instalador mostra o trecho a acrescentar | Do kernel, na interface `sambbi0` |
    | Sem root, com o systemd do usuário | Serviço do usuário. Com o linger, sobe no boot; sem ele, no login | No espaço do usuário |
-   | Sem systemd (contêiner) ou root no NixOS | Supervisor, até o próximo reinício. Depois dele: `sambbi-vpn iniciar` | No espaço do usuário; root com `/dev/net/tun` e `CAP_NET_ADMIN` usa a do kernel |
+   | Sem systemd (contêiner) | Supervisor, até o próximo reinício. Depois dele: `sambbi-vpn iniciar` | No espaço do usuário; root com `/dev/net/tun` e `CAP_NET_ADMIN` usa a do kernel |
    | Nix pelo proot, sem systemd (pod) | Supervisor, que sobe ao abrir um terminal ([detalhes](#com-o-nix-pelo-proot)) | No espaço do usuário |
 
    O serviço e o supervisor rodam o mesmo comando, `sambbi-vpnd`. Sem systemd, o supervisor faz o papel do serviço: roda o daemon e o sobe de novo se ele cair. Depois de `sambbi-vpn parar`, o daemon fica parado até `sambbi-vpn iniciar` ou até o próximo reinício. O log do daemon fica em `tailscaled.log`, na pasta de estado; o da sessão anterior, ou o que passar de 10 MiB, vai para `tailscaled.log.1`.
@@ -56,6 +57,35 @@ Com sudo, o script vem pela entrada padrão: `curl -fsSL URL | sudo bash -s -- [
 
 O ambiente de produção, sem instalar nada no perfil: `nix develop github:EvandroCT/sambbi-vpn`.
 
+## NixOS
+
+No NixOS, `/etc/systemd/system` vem do Nix store, e o instalador não cria o serviço do sistema. Os links que ele põe em `/usr/local/bin` também ficam fora do `PATH`. O serviço vem do módulo deste flake, no `configuration.nix`:
+
+```nix
+imports = [ (builtins.getFlake "github:EvandroCT/sambbi-vpn").nixosModules.default ];
+services.sambbi-vpn = {
+  enable = true;
+  portasTCP = [ 22 ];  # opcional: portas abertas só para a VPN
+};
+```
+
+Num `configuration.nix` de flake, use o flake como input e `inputs.sambbi-vpn.nixosModules.default`.
+
+O módulo declara a mesma unidade que o instalador cria nas outras distribuições, com a rede do kernel. Ele também põe o perfil `/nix/var/nix/profiles/sambbi-vpn` no `PATH` de todos e deixa a `sambbi0` fora do NetworkManager. O pacote continua no perfil do instalador, que o atualiza. Por isso, rode o instalador com root antes ou depois do `nixos-rebuild switch`: sem o perfil, o serviço não sobe, mas também não falha.
+
+Com o serviço declarado:
+- `sudo sambbi-vpn iniciar|parar|reiniciar` usa o systemctl, e `systemctl status sambbi-vpn` também funciona;
+- sem sudo, use o `sambbi-vpn` só para consultas. Ele cai no socket do sistema, mas um `iniciar` sem sudo subiria um segundo daemon, sem root;
+- o cadastro com sudo (pelo instalador ou por `sudo sambbi-vpn entrar`) dá ao usuário o papel de operador (`--operator`), e o `tailscale` funciona sem sudo para ele.
+
+Para passar um cliente sem root para o serviço, com o mesmo nó:
+1. instale o perfil do sistema, com `sudo nix build --profile /nix/var/nix/profiles/sambbi-vpn github:EvandroCT/sambbi-vpn`;
+2. ponha o módulo no `configuration.nix`;
+3. pare o cliente sem root, com `systemctl --user disable --now sambbi-vpn`;
+4. copie `~/.local/state/tailscale-user/tailscaled.state` para `/var/lib/sambbi-vpn/`, com a pasta em 0700, o arquivo em 0600 e ambos de root;
+5. rode `sudo nixos-rebuild switch` e `sudo sambbi-vpn set --operator=$USER`;
+6. desinstale o resto do cliente sem root ([Desinstalar](#desinstalar), passos 1 e 2).
+
 ## Com o Nix pelo proot
 
 Os terminais abrem dentro do proot. Um processo aberto ali dentro morre quando o terminal é encerrado, e um `nixp COMANDO` só volta quando terminam todos os processos que o comando abriu. Por isso o supervisor da VPN roda num proot só dele, aberto fora de qualquer outro:
@@ -73,7 +103,7 @@ Sem um supervisor no ar, `sambbi-vpn iniciar` num terminal sobe o daemon dentro 
 
 - O proxy em `127.0.0.1:1055` aceita qualquer usuário da máquina, sem senha. Numa máquina compartilhada, todos alcançam a VPN por ele; com a rede do kernel, também.
 - Dois usuários sem root na mesma máquina disputam a porta 1055. Mude a de um deles com `SAMBBI_VPN_PROXY`.
-- O instalador não mexe na configuração do NixOS. Lá, um serviço do sistema vem do `configuration.nix` (`services.tailscale`).
+- O instalador não mexe na configuração do NixOS. Lá, o serviço do sistema vem do [módulo](#nixos).
 
 ## Variáveis
 
@@ -90,7 +120,7 @@ Valem para o instalador e para os comandos:
 ## Desinstalar
 
 1. Pare o daemon e desligue o serviço:
-   - root: `systemctl disable --now sambbi-vpn && rm /etc/systemd/system/sambbi-vpn.service`;
+   - root: `systemctl disable --now sambbi-vpn && rm /etc/systemd/system/sambbi-vpn.service`. No NixOS, tire o módulo do `configuration.nix` e rode `nixos-rebuild switch`;
    - serviço do usuário: `systemctl --user disable --now sambbi-vpn && rm ~/.config/systemd/user/sambbi-vpn.service`;
    - supervisor: `sambbi-vpn parar`. O supervisor sai sozinho quando o perfil é apagado (passo 2).
 2. Apague o perfil: `rm /nix/var/nix/profiles/sambbi-vpn*` (root) ou `rm ~/.local/state/nix/profiles/sambbi-vpn*`.

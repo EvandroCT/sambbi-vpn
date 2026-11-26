@@ -78,6 +78,42 @@
         }
       );
 
+      # Serviço do sistema no NixOS (ver modulo-nixos.nix)
+      nixosModules.default = import ./modulo-nixos.nix;
+
+      # O módulo avalia e gera a unidade e as regras do firewall
+      checks = paraCada (
+        system:
+        let
+          nixos = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              {
+                services.sambbi-vpn.enable = true;
+                services.sambbi-vpn.portasTCP = [ 22 ];
+                networking.networkmanager.enable = true;
+                boot.loader.grub.enable = false;
+                fileSystems."/" = {
+                  device = "nodev";
+                  fsType = "tmpfs";
+                };
+                system.stateVersion = "26.05";
+              }
+            ];
+          };
+          cfg = nixos.config;
+        in
+        {
+          modulo-nixos =
+            assert cfg.systemd.services.sambbi-vpn.serviceConfig.ExecStart
+              == "/nix/var/nix/profiles/sambbi-vpn/bin/sambbi-vpnd";
+            assert cfg.networking.firewall.interfaces.sambbi0.allowedTCPPorts == [ 22 ];
+            assert builtins.elem "/nix/var/nix/profiles/sambbi-vpn" cfg.environment.profiles;
+            cfg.systemd.units."sambbi-vpn.service".unit;
+        }
+      );
+
       # Ambiente de produção, sem o Claude: nix develop github:EvandroCT/sambbi-vpn
       devShells = paraCada (system: {
         default = nixpkgs.legacyPackages.${system}.mkShellNoCC {

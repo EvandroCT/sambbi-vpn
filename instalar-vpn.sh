@@ -10,7 +10,9 @@
 #    vpn-teste e rclone. Sem root, a linha ProxyCommand da receita manual
 #    antiga, no ~/.ssh/config, passa a usar o sambbi-vpn.
 # 3. O daemon da VPN (tailscaled), como serviço sempre que der:
-#    - root com systemd: serviço do sistema, com a rede do kernel;
+#    - root com systemd: serviço do sistema, com a rede do kernel. No NixOS, o
+#      serviço vem do módulo deste flake (nixosModules.default), no
+#      configuration.nix; sem ele, um supervisor, como abaixo;
 #    - sem root, com o systemd do usuário: serviço do usuário. Ele sobe no boot
 #      se o linger for aceito; senão, no login;
 #    - sem systemd (pod, contêiner): um supervisor faz o papel do serviço,
@@ -302,7 +304,14 @@ if [ -n "$antes" ] && [ "$antes" != "$depois" ] && vivo; then antigo=1; fi
 fora=0
 if [ "$eu" = 0 ]; then
   if [ -e /etc/NIXOS ]; then
-    diz "aviso: no NixOS, um serviço permanente vem do configuration.nix, que este script não altera"
+    # Lá /etc/systemd/system vem do Nix store: o serviço vem do módulo deste
+    # flake (nixosModules.default), que o instalador não põe no configuration.nix
+    if [ -f /etc/systemd/system/sambbi-vpn.service ]; then
+      modo=sistema
+    else
+      modo=nixos
+      diz "aviso: no NixOS, o serviço do sistema vem do módulo deste flake, no configuration.nix, que o instalador não altera; até lá, a VPN fica sob um supervisor"
+    fi
   elif [ -d /run/systemd/system ]; then
     cat >/etc/systemd/system/sambbi-vpn.service <<EOF
 [Unit]
@@ -442,6 +451,11 @@ echo
 case $modo in
   sistema) diz "pronto: a VPN é um serviço do sistema (systemctl status sambbi-vpn) e sobe no boot" ;;
   usuário) diz "pronto: a VPN é um serviço do seu usuário (systemctl --user status sambbi-vpn)" ;;
+  nixos)
+    diz "pronto: a VPN fica no ar sob um supervisor até o próximo reinício, e os comandos ficam fora do PATH do NixOS, em $B"
+    diz "para um serviço do sistema, que sobe no boot e põe os comandos no PATH, acrescente ao configuration.nix e rode nixos-rebuild switch:"
+    printf '      imports = [ (builtins.getFlake "%s").nixosModules.default ];\n      services.sambbi-vpn.enable = true;\n' "$FLAKE"
+    ;;
   *)
     if [ "${#PFX[@]}" -gt 0 ]; then
       diz "pronto: a VPN fica no ar sob um supervisor, num proot só dele, que não cai com os terminais. Depois de um reinício, ela sobe ao abrir um terminal"
